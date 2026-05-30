@@ -1,6 +1,6 @@
 # Estado Atual do Projeto
 
-**Última atualização:** 2026-05-26 (rev 6)
+**Última atualização:** 2026-05-29 (rev 7)
 
 ---
 
@@ -55,19 +55,30 @@
 
 - Fase 2 — Dashboard implementado, aguardando testes completos pela usuária
 - **Módulo Financeiro** — implementação completa + correções pós-teste (2026-05-26), aguardando testes finais pela usuária
+- **Testes — Módulo de Clientes** — spec + tasks + implementação completa (2026-05-29); aguardando execução pela usuária (`mvn test`)
 
 ### ✅ Fase 2 — Concluído
 
 - [x] **Dashboard** — spec + design + tasks + implementação completa
   - Backend: `DashboardRepositoryImpl` (10 queries JPQL via EntityManager), `GetDashboardUseCaseImpl`, `DashboardResponse` DTO, `DashboardController` (`GET /api/dashboard?period=TODAY|WEEK|MONTH`)
-  - Frontend: `dashboard.model.ts`, `DashboardService`, NgRx store (actions/reducer/effects/selectors), 5 sub-componentes (`KpiCardComponent`, `AppointmentsChartComponent`, `CashFlowChartComponent`, `TodayAppointmentsComponent`, `MiniCalendarComponent`), `DashboardComponent` principal integrado
+  - Frontend: `dashboard.model.ts`, `DashboardService`, NgRx store (actions/reducer/effects/selectors), 4 sub-componentes (`KpiCardComponent`, `AppointmentsChartComponent`, `CashFlowChartComponent`, `TodayAppointmentsComponent`), `DashboardComponent` principal integrado
   - Biblioteca de gráficos: `ng-apexcharts@1.11.0` + `apexcharts` (versão fixada por compatibilidade com Angular 18)
   - Sidebar recolhível: toggle com botão circular flutuante na borda, transição CSS 0.25s, tooltips no modo recolhido
+  - **Rev 1 (2026-05-29):** `MiniCalendarComponent` removido — não agregava valor suficiente; `selectDaysWithAppointments` removido dos selectors; `TodayAppointmentsComponent` ocupa sozinha a coluna direita
 
 ### ⏳ Pendente (Fase 2)
 
 - [ ] Módulo Financeiro
 - [ ] Módulo de Estoque
+
+### 🧪 Testes automatizados (iniciado)
+
+- [x] **Testes Módulo de Clientes** — spec + tasks + 9 arquivos implementados
+  - Padrão: unitário `*Test.java` (Mockito + AssertJ), integração `*ITest.java` (@SpringBootTest + @Transactional + @Rollback)
+  - `AbstractIntegrationTest` criado como base reutilizável para todos os futuros ITests
+  - `application-test.yml` em `src/test/resources/` — aponta para PostgreSQL Docker :5433
+  - 28 casos: 21 unitários + 6 integração + 1 infra
+  - Comandos: `mvn test -Dtest="*Test"` (unitários) / `mvn test -Dtest="*ITest"` (integração, requer banco)
 
 ---
 
@@ -106,6 +117,7 @@
 | 2026-05-26 | `GET /api/financial/categories` endpoint independente | Filtro de categoria carregava apenas categorias da aba/período atual; endpoint retorna todas as categorias distintas do banco |
 | 2026-05-26 | `isIncomePaid` desabilita todo o form e exibe locked-banner | Receitas já recebidas são imutáveis por regra de negócio — qualquer edição comprometeria o histórico financeiro |
 | 2026-05-26 | Date pickers De/Até aparecem quando período = CUSTOM | Alternativa ao campo de texto livre para datas customizadas — MatDatepicker garante formato correto |
+| 2026-05-29 | `MiniCalendarComponent` removido do Dashboard | Não agregava valor suficiente para a usuária; simplifica a tela e elimina código morto (`selectDaysWithAppointments`, `onCalendarDayClick`, `Router`) |
 
 ---
 

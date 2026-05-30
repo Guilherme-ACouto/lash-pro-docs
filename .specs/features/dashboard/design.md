@@ -1,7 +1,8 @@
 # Design — Dashboard (Fase 2)
 
 **Data:** 2026-05-23
-**Status:** Aprovado para implementação
+**Status:** Implementado ✅
+**Nota (2026-05-29):** `MiniCalendarComponent` removido pós-implementação — não agregava valor suficiente. Ver STATE.md decisão 2026-05-29.
 
 ---
 
