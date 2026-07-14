@@ -99,11 +99,11 @@ lash-backend/
 │   └── port/
 │       ├── in/            ← *UseCase
 │       └── out/           ← *Repository, portas de integração cross-módulo (ex.: ClientAppointmentPort)
-├── application/usecase/   ← *UseCaseImpl + *UseCaseMapper
+├── application/usecase/   ← *UseCaseImpl (anotado @Service, exceto lash-services que usa
+│                             @org.springframework.stereotype.Service qualificado) + *UseCaseMapper
 ├── infrastructure/
 │   ├── persistence/entity|mapper|repository/
-│   ├── adapter/           ← implementações de port/out que cruzam módulo (quando este módulo é o "dono" do dado)
-│   └── config/            ← @Configuration específica (quando existe)
+│   └── adapter/           ← implementações de port/out que cruzam módulo (quando este módulo é o "dono" do dado)
 └── adapter/web/
     ├── controller/
     └── dto/

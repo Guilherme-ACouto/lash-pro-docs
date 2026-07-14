@@ -118,6 +118,8 @@
 | 2026-05-26 | `isIncomePaid` desabilita todo o form e exibe locked-banner | Receitas já recebidas são imutáveis por regra de negócio — qualquer edição comprometeria o histórico financeiro |
 | 2026-05-26 | Date pickers De/Até aparecem quando período = CUSTOM | Alternativa ao campo de texto livre para datas customizadas — MatDatepicker garante formato correto |
 | 2026-05-29 | `MiniCalendarComponent` removido do Dashboard | Não agregava valor suficiente para a usuária; simplifica a tela e elimina código morto (`selectDaysWithAppointments`, `onCalendarDayClick`, `Router`) |
+| 2026-07-14 | Use cases voltam a usar `@Service` direto (não `{Modulo}Config`/`@Bean`) | Durante o refactor multi-módulo, a IA trocou o wiring de use cases por classes `{Modulo}Config` sem ter sido pedido; usuária pediu para reverter |
+| 2026-07-14 | `domain.model.Service` renomeado para `ServiceOffering` (RENAME-01) | Resolve o conflito de nome com `@org.springframework.stereotype.Service` de vez, sem precisar de anotação qualificada em `lash-services` |
 
 ---
 
@@ -136,7 +138,7 @@
 |---|---|---|
 | CLI-13 | ✅ Implementado — modal com lista de agendamentos futuros ao desativar; exclusão bloqueia se futuros ativos, apaga futuros cancelados, desvincula passados | Concluído |
 | SVC-13 | ✅ Implementado — modal com lista de agendamentos futuros ao desativar; exclusão bloqueia se futuros ativos | Concluído |
-| RENAME-01 | Renomear `domain.model.Service` para `ServiceOffering` ou `LashService` | Refactor pós-Fase 1 |
+| RENAME-01 | ✅ Implementado (2026-07-14) — `domain.model.Service` renomeado para `ServiceOffering`; use cases de `lash-services` e `lash-appointments` voltaram a usar `@Service` sem qualificação | Concluído |
 | CQRS-01 | Implementar padrão CQRS nos endpoints — separar operações de leitura (Query) das de escrita (Command) | Após refatoração multi-módulo |
 
 ---

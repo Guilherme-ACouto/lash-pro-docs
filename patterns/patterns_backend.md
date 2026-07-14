@@ -18,18 +18,17 @@ Ver `.specs/codebase/ARCHITECTURE.md` para a árvore de dependências entre mód
 3. Exceções de domínio (`domain/exception`) — estendendo `DomainException`/`BusinessException` de `lash-core`
 4. Port In — Use Case interfaces (`domain/port/in`)
 5. Port Out — Repository interface, e portas cross-módulo se precisar ler dado de outro módulo (`domain/port/out`)
-6. Use Case implementations (`application/usecase`) — classes simples, **sem anotação Spring**
-7. `{Modulo}Config` (`infrastructure/config`) — registra cada use case como `@Bean`
-8. JPA Entity (`infrastructure/persistence/entity`)
-9. JPA Repository interface — Spring Data (`infrastructure/persistence/repository`)
-10. Mapper Entity ↔ Domain (`infrastructure/persistence/mapper`)
-11. Repository Implementation (`infrastructure/persistence/repository`)
-12. DTOs de Request/Response (`adapter/web/dto`)
-13. Controller (`adapter/web/controller`)
-14. Flyway migration, no range de versão reservado do módulo (`V{modulo}00__...`)
-15. Adicionar o módulo como dependência de `lash-app/pom.xml`
-16. Registrar os handlers de exceção do módulo em `lash-app/adapter/web/GlobalExceptionHandler.java`
-17. Testes: `AbstractIntegrationTest` + `{Modulo}TestApplication` (se o módulo tiver teste de integração) + `*UseCaseImplTest` por use case
+6. Use Case implementations (`application/usecase`) — anotadas `@Service` diretamente
+7. JPA Entity (`infrastructure/persistence/entity`)
+8. JPA Repository interface — Spring Data (`infrastructure/persistence/repository`)
+9. Mapper Entity ↔ Domain (`infrastructure/persistence/mapper`)
+10. Repository Implementation (`infrastructure/persistence/repository`)
+11. DTOs de Request/Response (`adapter/web/dto`)
+12. Controller (`adapter/web/controller`)
+13. Flyway migration, no range de versão reservado do módulo (`V{modulo}00__...`)
+14. Adicionar o módulo como dependência de `lash-app/pom.xml`
+15. Registrar os handlers de exceção do módulo em `lash-app/adapter/web/GlobalExceptionHandler.java`
+16. Testes: `AbstractIntegrationTest` + `{Modulo}TestApplication` (se o módulo tiver teste de integração) + `*UseCaseImplTest` por use case
 
 ### `pom.xml` do módulo
 
@@ -236,7 +235,7 @@ public class ClientAppointmentPortImpl implements ClientAppointmentPort {
 
 O bean só existe em runtime porque `lash-app` traz os dois módulos no classpath — em um
 módulo isolado (testes de `lash-clients`, por exemplo), essa porta vira `@MockBean`
-(ver `patterns_backend.md` seção de testes mais abaixo e `.specs/codebase/TESTING.md`).
+(ver seção de testes mais abaixo e `.specs/codebase/TESTING.md`).
 
 **Antes de criar uma porta cross-módulo nova**, checar a árvore de dependências em
 ARCHITECTURE.md — só é possível declarar `port/out` para consumir um módulo que já
@@ -248,12 +247,16 @@ ver C10 em `.specs/codebase/CONCERNS.md` para um caso real disso acontecendo ent
 
 ## Use Case — Implementation
 
-**Sem anotação Spring.** Classe Java simples com `@RequiredArgsConstructor` — o registro
-como bean é feito manualmente em `{Modulo}Config` (próxima seção).
+`@Service` direto na classe, com `@RequiredArgsConstructor` — vira bean automaticamente
+via component scan (`lash-app` faz `@SpringBootApplication(scanBasePackages = "com.lashmanager")`,
+então o scan cobre todos os módulos). **Não** existe uma classe de configuração
+intermediária para registrar use cases — cada módulo é responsável por anotar sua
+própria implementação.
 
 ```java
 package com.lashmanager.clients.application.usecase;
 
+@Service
 @RequiredArgsConstructor
 public class CreateClientUseCaseImpl implements CreateClientUseCase {
 
@@ -282,10 +285,10 @@ public class CreateClientUseCaseImpl implements CreateClientUseCase {
 }
 ```
 
-> **Exceção à regra:** em `lash-core`, os 3 use cases (`LoginUseCaseImpl`,
-> `RefreshTokenUseCaseImpl`, `ForgotPasswordUseCaseImpl`) usam `@Service` direto, sem
-> `Config` dedicada — módulo sem dependência cross-módulo a esconder, não precisa do
-> wiring explícito. Em qualquer módulo de domínio novo, seguir o padrão `{Modulo}Config`.
+> **Nota:** o domain model de `lash-services` se chama `ServiceOffering` (não `Service`)
+> justamente para não colidir com `@org.springframework.stereotype.Service` — por isso
+> `*ServiceUseCaseImpl` também usa `@Service` normal, sem qualificação, como qualquer
+> outro módulo.
 
 ### `*UseCaseMapper` — domain model → Result record
 
@@ -310,48 +313,6 @@ public class ClientUseCaseMapper {
     }
 }
 ```
-
----
-
-## `{Modulo}Config` — wiring dos use cases
-
-Um `@Configuration` por módulo, com um método `@Bean` por use case. É aqui que
-dependências cross-módulo (portas implementadas em outro módulo) entram no construtor:
-
-```java
-package com.lashmanager.clients.infrastructure.config;
-
-@Configuration
-public class ClientsConfig {
-
-    @Bean
-    public CreateClientUseCase createClientUseCase(ClientRepository clientRepository) {
-        return new CreateClientUseCaseImpl(clientRepository);
-    }
-
-    @Bean
-    public DeleteClientUseCase deleteClientUseCase(
-            ClientRepository clientRepository,
-            ClientAppointmentPort clientAppointmentPort   // implementada em lash-appointments
-    ) {
-        return new DeleteClientUseCaseImpl(clientRepository, clientAppointmentPort);
-    }
-
-    @Bean
-    public DeactivateClientUseCase deactivateClientUseCase(
-            ClientRepository clientRepository,
-            ClientAppointmentPort clientAppointmentPort
-    ) {
-        return new DeactivateClientUseCaseImpl(clientRepository, clientAppointmentPort);
-    }
-
-    // ... um @Bean por use case do módulo
-}
-```
-
-**Toda vez que um use case novo é criado, adicionar o `@Bean` correspondente aqui** —
-esquecer esse passo é o erro mais comum ao adicionar um caso de uso novo (o Spring não
-vai reclamar até o controller injetar a interface e não achar bean nenhum).
 
 ---
 

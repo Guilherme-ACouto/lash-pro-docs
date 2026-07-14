@@ -104,34 +104,11 @@ com.lashmanager.{modulo}
 - Injeção sempre via construtor — `@RequiredArgsConstructor`; nunca `@Autowired` em campo
 - Módulos nunca acessam entidade JPA ou repositório de outro módulo — a fronteira é sempre um `port/out` + adapter
 
-### Wiring dos use cases: `{Modulo}Config` em vez de `@Service`
+### Wiring dos use cases: `@Service` direto, sem classe de configuração
 
-Diferente do que a Fase 1 (mono-módulo) fazia, os `*UseCaseImpl` dos 8 módulos de domínio (todos exceto `lash-core`) **não levam anotação Spring nenhuma** — nem `@Service`, nem `@Component`. Eles são classes Java simples com `@RequiredArgsConstructor`, e cada módulo declara uma única classe `infrastructure/config/{Modulo}Config.java` (`@Configuration`) que registra cada use case como `@Bean` manualmente:
+Em todos os 9 módulos, `*UseCaseImpl` é anotado diretamente com `@Service` (`import org.springframework.stereotype.Service;`) e `@RequiredArgsConstructor` — vira bean automaticamente via component scan (`@SpringBootApplication(scanBasePackages = "com.lashmanager")` em `lash-app` cobre todos os módulos). Não existe (e não deve ser criada) nenhuma classe `{Modulo}Config`/`@Bean` para registrar use cases manualmente — isso foi tentado brevemente durante o refactor multi-módulo, mas foi revertido a pedido da usuária por não ter sido solicitado.
 
-```java
-// lash-clients/infrastructure/config/ClientsConfig.java
-@Configuration
-public class ClientsConfig {
-
-    @Bean
-    public CreateClientUseCase createClientUseCase(ClientRepository clientRepository) {
-        return new CreateClientUseCaseImpl(clientRepository);
-    }
-
-    @Bean
-    public DeleteClientUseCase deleteClientUseCase(
-            ClientRepository clientRepository,
-            ClientAppointmentPort clientAppointmentPort   // porta cross-módulo
-    ) {
-        return new DeleteClientUseCaseImpl(clientRepository, clientAppointmentPort);
-    }
-    // ... um @Bean por use case
-}
-```
-
-Essa mudança **resolveu de forma definitiva** o antigo conflito de nome `domain.model.Service` vs. `@org.springframework.stereotype.Service` (documentado como C03 em CONCERNS.md na Fase 1) — como não há mais anotação `@Service` em lugar nenhum dos módulos de domínio, o conflito deixou de existir. `lash-core` é a única exceção: seus 3 use cases (`LoginUseCaseImpl`, `RefreshTokenUseCaseImpl`, `ForgotPasswordUseCaseImpl`) ainda usam `@Service` diretamente, sem `{Modulo}Config` — não há necessidade de mudar, já que `core` não tem um domain model chamado `Service`.
-
-**Por que essa mudança:** wiring explícito via `@Bean` deixa a instanciação de dependências cross-módulo (como `ClientAppointmentPort`, implementada em `lash-appointments`) visível e centralizada em um único arquivo por módulo, em vez de depender de component scan implícito descobrir a implementação certa em outro JAR do classpath.
+**Nota histórica — conflito de nome `Service` (resolvido):** até 2026-07-14, `lash-services` tinha um `domain.model.Service` que colidia de nome com `@org.springframework.stereotype.Service`, exigindo anotação qualificada (`@org.springframework.stereotype.Service`, sem `import`) nos use cases desse módulo. O domain model foi renomeado para `ServiceOffering` — o conflito não existe mais, e `lash-services` usa `@Service` normal como qualquer outro módulo.
 
 ---
 
@@ -141,7 +118,7 @@ Essa mudança **resolveu de forma definitiva** o antigo conflito de nome `domain
 |---|---|---|---|
 | lash-core | `User` | Login, Refresh, ForgotPassword (3 use cases) | `/api/auth/**` |
 | lash-clients | `Client` | Create, Update, Get, List, Deactivate/Reactivate, Delete (7 use cases) | `/api/clients` |
-| lash-services | `Service` | Create, Update, Get, List, Deactivate (7 use cases) | `/api/services` |
+| lash-services | `ServiceOffering` | Create, Update, Get, List, Deactivate (7 use cases) | `/api/services` |
 | lash-appointments | `Appointment`, `AppointmentStatus` | Create, Update, Get, List, Cancel, ... (6 use cases) | `/api/appointments` |
 | lash-finance | `FinancialEntry`, `MonthlyFinancialStat`, tipos/status | Create, Update, Get, List, ... (7 use cases) | `/api/financial` |
 | lash-stock | `InventoryItem`, `InventoryMovement`, tipos de movimento | Create, Update, Get, List, registrar movimentação, ... (10 use cases) | `/api/inventory` |

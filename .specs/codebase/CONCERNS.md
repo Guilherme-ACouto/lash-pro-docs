@@ -44,7 +44,9 @@ private String jwtSecret;
 
 ### C03 — [RESOLVIDO] Conflito de nome: `domain.model.Service` vs `@Service`
 
-**Status:** Resolvido como efeito colateral da refatoração multi-módulo. Os `*UseCaseImpl` de todos os módulos de domínio (incluindo `lash-services`) deixaram de usar qualquer anotação Spring — o registro como bean passou a ser feito manualmente via `@Bean` em `{Modulo}Config` (ver ARCHITECTURE.md e CONVENTIONS.md). Como `@org.springframework.stereotype.Service` não aparece mais em nenhum `*ServiceUseCaseImpl`, o conflito de nome com `domain.model.Service` deixou de existir na prática. O rename de `domain.model.Service` para `ServiceOffering`/`LashService` continua sendo uma limpeza cosmética válida, mas não é mais urgente — mantido aqui só como registro histórico.
+**Status:** Resolvido em 2026-07-14. O domain model de `lash-services` foi renomeado de `Service` para `ServiceOffering` (arquivo `lash-services/domain/model/ServiceOffering.java`) — atualizados `ServiceRepository`, `ServiceMapper`, `ServiceRepositoryImpl`, `ServiceUseCaseMapper` e os 6 `*ServiceUseCaseImpl`, além de `CreateAppointmentUseCaseImpl` e `UpdateAppointmentUseCaseImpl` em `lash-appointments` (que também referenciavam o tipo). Todos os `*UseCaseImpl` desses módulos voltaram a usar `@Service` normal, sem qualificação — o conflito não existe mais em lugar nenhum do código.
+
+**Nota histórica:** durante o refactor multi-módulo, o wiring dos use cases também tinha sido trocado temporariamente por `{Modulo}Config`/`@Bean` (que também "escondia" este conflito, por não usar anotação Spring nenhuma). Essa mudança não tinha sido pedida e foi revertida antes deste fix — o problema real (nome do domain model) só foi resolvido depois, com o rename.
 
 ---
 
@@ -138,7 +140,7 @@ record PageResult<T>(List<T> content, long totalElements, int page) {}
 |---|---|---|---|
 | C01 | 🔴 Crítico | 7 de 9 módulos sem testes | Implementar gradualmente, seguindo o modelo de lash-clients |
 | C02 | 🔴 Crítico | JWT_SECRET hardcoded | Remover default antes do primeiro deploy |
-| C03 | ✅ Resolvido | Conflito nome Service | Resolvido — use cases não usam mais `@Service` |
+| C03 | ✅ Resolvido | Conflito nome Service | Domain model renomeado para `ServiceOffering` |
 | C04 | 🟡 Moderado | Spring no domínio (Page/Pageable) | Aceito pragmaticamente, rever em Fase 2 |
 | C05 | 🟡 Moderado | SVC-13 deferred (serviços) | Resolver — ver C10 para a restrição de dependência |
 | C06 | 🟡 Moderado | Bundle Angular acima do budget | Auditar imports após completar Fase 1 |

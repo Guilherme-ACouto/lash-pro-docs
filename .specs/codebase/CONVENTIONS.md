@@ -28,7 +28,7 @@
 
 | Tipo | Padrão | Exemplo |
 |---|---|---|
-| Domain Model | `NomeDoModelo` | `Client`, `Service`, `User` |
+| Domain Model | `NomeDoModelo` | `Client`, `ServiceOffering`, `User` |
 | Use Case (port/in) | `VerbNomeUseCase` | `CreateClientUseCase` |
 | Use Case (impl) | `VerbNomeUseCaseImpl` | `CreateClientUseCaseImpl` |
 | Use Case Mapper | `NomeUseCaseMapper` | `ClientUseCaseMapper` |
@@ -71,31 +71,11 @@ public class Client {
 }
 ```
 
-### Wiring de use case: `{Modulo}Config`, nunca `@Service`
+### Wiring de use case: sempre `@Service` direto na classe
 
-Nos 8 módulos de domínio (todos exceto `lash-core`), `*UseCaseImpl` é uma classe Java simples — só `@RequiredArgsConstructor`, **sem anotação Spring**. O registro como bean acontece manualmente em `infrastructure/config/{Modulo}Config.java` (`@Configuration` + um método `@Bean` por use case):
+Todo `*UseCaseImpl`, em qualquer módulo, é anotado diretamente com `@Service` (`import org.springframework.stereotype.Service;`) + `@RequiredArgsConstructor` — vira bean via component scan, sem classe de configuração intermediária. Ao criar um use case novo, sempre anotar a classe `*UseCaseImpl` diretamente — nunca criar uma classe `{Modulo}Config` com `@Bean` para isso.
 
-```java
-// domain: classe simples, sem anotação Spring
-@RequiredArgsConstructor
-public class CreateClientUseCaseImpl implements CreateClientUseCase {
-    private final ClientRepository clientRepository;
-    // ...
-}
-
-// infrastructure/config/ClientsConfig.java: wiring explícito
-@Configuration
-public class ClientsConfig {
-    @Bean
-    public CreateClientUseCase createClientUseCase(ClientRepository clientRepository) {
-        return new CreateClientUseCaseImpl(clientRepository);
-    }
-}
-```
-
-`lash-core` é a exceção: seus use cases (`LoginUseCaseImpl`, ...) usam `@Service` direto, sem `Config` dedicada — módulo mais simples, sem dependências cross-módulo a esconder.
-
-Ao criar um use case novo em qualquer módulo de domínio: **não** anotar a classe `*UseCaseImpl` — sempre adicionar o `@Bean` correspondente em `{Modulo}Config`.
+> **Nota histórica:** até 2026-07-14, o domain model de `lash-services` se chamava `Service` e colidia de nome com `@org.springframework.stereotype.Service`, exigindo a forma qualificada `@org.springframework.stereotype.Service` (sem `import`) nesse módulo. Foi renomeado para `ServiceOffering` — hoje `lash-services` usa `@Service` normal como qualquer outro módulo, sem qualificação.
 
 ### Result records (use cases)
 
