@@ -1,6 +1,6 @@
 # Preocupações — Lash Manager
 
-**Atualizado:** 2026-05-22
+**Atualizado:** 2026-07-14
 
 Preocupações identificadas no código com evidências concretas. Ordenadas por risco.
 
@@ -8,16 +8,17 @@ Preocupações identificadas no código com evidências concretas. Ordenadas por
 
 ## 🔴 CRÍTICO
 
-### C01 — Zero cobertura de testes
+### C01 — 7 de 9 módulos backend sem nenhum teste automatizado
 
-**Evidência:** `lash-backend/src/test/` vazio; nenhum `*.spec.ts` significativo em `lash-frontend/`  
-**Risco:** Qualquer refatoração ou nova feature pode quebrar comportamentos existentes sem ser detectada  
-**Impacto:** Todos os módulos (Auth, Clients, Services)
+**Evidência:** apenas `lash-core` (1 arquivo) e `lash-clients` (8 arquivos) têm `src/test/` com conteúdo. `lash-services`, `lash-appointments`, `lash-finance`, `lash-stock`, `lash-fichas`, `lash-dashboard` e `lash-app` têm `src/test/` vazio ou inexistente, apesar de todos terem domain/use case/controller implementados. Nenhum `*.spec.ts` significativo em `lash-frontend/`  
+**Risco:** Qualquer refatoração ou nova feature nesses 7 módulos pode quebrar comportamentos existentes sem ser detectada  
+**Impacto:** lash-services, lash-appointments, lash-finance, lash-stock, lash-fichas, lash-dashboard, lash-app
 
-**Correção recomendada:**
-1. Prioridade 1: use case tests com Mockito (`CreateClientUseCaseImplTest`, etc.)
-2. Prioridade 2: reducer tests no Angular (funções puras, sem setup)
-3. Prioridade 3: `@WebMvcTest` para controllers
+**Correção recomendada:** usar `lash-clients` como modelo de referência (ver TESTING.md) — replicar por módulo, na ordem de dependência do reactor:
+1. Prioridade 1: `lash-services` e `lash-appointments` — use case tests com Mockito + `@DisplayName` em português
+2. Prioridade 2: `lash-finance`, `lash-stock`, `lash-fichas` — mesmo padrão
+3. Prioridade 3: `lash-dashboard` (agregação, poucos use cases) e `@WebMvcTest` para controllers de todos os módulos
+4. Prioridade 4: reducer tests no Angular (funções puras, sem setup)
 
 ---
 
@@ -41,17 +42,9 @@ private String jwtSecret;
 
 ## 🟡 MODERADO
 
-### C03 — Conflito de nome: `domain.model.Service` vs `@Service`
+### C03 — [RESOLVIDO] Conflito de nome: `domain.model.Service` vs `@Service`
 
-**Evidência:** Todos os `*ServiceUseCaseImpl.java` usam:
-```java
-@org.springframework.stereotype.Service  // qualificado
-```
-
-**Risco:** Baixo risco funcional (código compila e funciona), mas é um smell — viola o princípio de nomes claros e pode causar confusão em novos devs  
-**Impacto:** `CreateServiceUseCaseImpl`, `UpdateServiceUseCaseImpl`, `GetServiceUseCaseImpl`, `ListServicesUseCaseImpl`, `DeactivateServiceUseCaseImpl`
-
-**Correção recomendada:** Renomear `domain.model.Service` para `ServiceOffering` ou `LashService`. Requer atualização em ~15 arquivos. Baixa urgência.
+**Status:** Resolvido como efeito colateral da refatoração multi-módulo. Os `*UseCaseImpl` de todos os módulos de domínio (incluindo `lash-services`) deixaram de usar qualquer anotação Spring — o registro como bean passou a ser feito manualmente via `@Bean` em `{Modulo}Config` (ver ARCHITECTURE.md e CONVENTIONS.md). Como `@org.springframework.stereotype.Service` não aparece mais em nenhum `*ServiceUseCaseImpl`, o conflito de nome com `domain.model.Service` deixou de existir na prática. O rename de `domain.model.Service` para `ServiceOffering`/`LashService` continua sendo uma limpeza cosmética válida, mas não é mais urgente — mantido aqui só como registro histórico.
 
 ---
 
@@ -80,18 +73,13 @@ record PageResult<T>(List<T> content, long totalElements, int page) {}
 
 ---
 
-### C05 — CLI-13 / SVC-13: Desativação sem verificação de agendamentos
+### C05 — SVC-13: Desativação de serviço ainda sem verificação de agendamentos (resolvido para clientes)
 
-**Evidência:** `DeactivateClientUseCaseImpl.java` e `DeactivateServiceUseCaseImpl.java`:
-```java
-// CLI-13: future appointments check will be added when Appointments module is implemented
-// SVC-13: future appointments check will be added when Appointments module is implemented
-```
+**Evidência:** com `lash-appointments` implementado, `lash-clients` já resolveu a checagem — `DeactivateClientUseCaseImpl` e `DeleteClientUseCaseImpl` usam `ClientAppointmentPort` (implementada em `lash-appointments/infrastructure/adapter`) e lançam `HasFutureAppointmentsException` quando há agendamento futuro ativo. `lash-services/DeactivateServiceUseCaseImpl` **ainda não tem** a checagem equivalente — não depende de `lash-appointments` no `pom.xml`  
+**Risco:** Um serviço com agendamentos futuros pode ser desativado sem aviso  
+**Impacto:** Dados inconsistentes — agendamentos futuros referenciando um serviço desativado ficam "órfãos" visualmente
 
-**Risco:** Uma cliente ou serviço com agendamentos futuros pode ser desativado sem aviso  
-**Impacto:** Dados inconsistentes — agendamentos futuros ficam "órfãos" visualmente
-
-**Status:** Intencional — deferred até o módulo de Agendamentos ser implementado. Deve ser resolvido no design de Agendamentos.
+**Correção recomendada:** replicar o padrão de `lash-clients` em `lash-services` — criar `ServiceAppointmentPort` em `lash-services/domain/port/out`, implementar em `lash-appointments/infrastructure/adapter`, adicionar `lash-appointments` como dependência de `lash-services` no `pom.xml` (cuidado: isso inverteria a direção atual da dependência, já que hoje `lash-appointments` depende de `lash-services` — avaliar se a porta deve, em vez disso, viver em `lash-appointments` consultando `lash-services` só por leitura, ou se o check deve ser movido para `lash-appointments` no momento da criação do agendamento)
 
 ---
 
@@ -110,12 +98,9 @@ record PageResult<T>(List<T> content, long totalElements, int page) {}
 
 ## 🟢 BAIXO / OBSERVAÇÃO
 
-### C07 — Migrations monolíticas (V1 cria schema completo)
+### C07 — [RESOLVIDO] Migrations monolíticas
 
-**Evidência:** `V1__create_schema.sql` cria 8 tabelas de uma vez, incluindo tabelas de módulos ainda não implementados (appointments, financial_entries, inventory_items, inventory_movements)
-
-**Risco:** Baixo no estado atual. Em produção, se um rollback for necessário em módulo específico, não há granularidade  
-**Status:** Aceitável para Fase 1. Para Fase 2+, criar migrations incrementais por módulo (V3, V4, etc.)
+**Status:** Resolvido pela refatoração multi-módulo. Cada módulo agora tem sua própria migration (`V100`–`V800`, um range de 100 por módulo) em vez de um único `V1__create_schema.sql` — ver STRUCTURE.md e INTEGRATIONS.md. Mantido aqui só como registro histórico da decisão.
 
 ---
 
@@ -137,16 +122,27 @@ record PageResult<T>(List<T> content, long totalElements, int page) {}
 
 ---
 
+### C10 — `lash-services` não pode depender de `lash-appointments` (dependência já invertida)
+
+**Evidência:** `lash-appointments/pom.xml` já depende de `lash-core`, `lash-clients` e `lash-services`. Isso bloqueia C05 (checagem de agendamento futuro na desativação de serviço) pelo caminho usado em `lash-clients`, porque criar `lash-appointments → lash-services` na direção inversa geraria dependência circular no reactor Maven  
+**Risco:** Baixo isoladamente, mas é uma restrição estrutural que qualquer nova feature cross-módulo entre `lash-services` e `lash-appointments` vai esbarrar  
+**Impacto:** `lash-services`, `lash-appointments`
+
+**Correção recomendada:** ao resolver C05, decidir entre (a) mover a checagem para dentro de `lash-appointments` (que já pode ler `lash-services`) — ex.: validar na criação do agendamento que o serviço está ativo, ou expor um evento/consulta somente-leitura; (b) extrair um port neutro em `lash-core` que ambos os módulos implementam/consultam sem dependência direta entre si. Não decidido ainda — registrar a decisão em STATE.md quando escolhida.
+
+---
+
 ## Resumo de Prioridades
 
 | ID | Severidade | Título | Ação |
 |---|---|---|---|
-| C01 | 🔴 Crítico | Zero testes | Implementar gradualmente, começar por use cases |
+| C01 | 🔴 Crítico | 7 de 9 módulos sem testes | Implementar gradualmente, seguindo o modelo de lash-clients |
 | C02 | 🔴 Crítico | JWT_SECRET hardcoded | Remover default antes do primeiro deploy |
-| C03 | 🟡 Moderado | Conflito nome Service | Renomear domain model em refactor futuro |
+| C03 | ✅ Resolvido | Conflito nome Service | Resolvido — use cases não usam mais `@Service` |
 | C04 | 🟡 Moderado | Spring no domínio (Page/Pageable) | Aceito pragmaticamente, rever em Fase 2 |
-| C05 | 🟡 Moderado | CLI-13 / SVC-13 deferred | Resolver no módulo de Agendamentos |
+| C05 | 🟡 Moderado | SVC-13 deferred (serviços) | Resolver — ver C10 para a restrição de dependência |
 | C06 | 🟡 Moderado | Bundle Angular acima do budget | Auditar imports após completar Fase 1 |
-| C07 | 🟢 Baixo | Migrations monolíticas | Aceitável para Fase 1 |
+| C07 | ✅ Resolvido | Migrations monolíticas | Resolvido pela refatoração multi-módulo |
 | C08 | 🟢 Baixo | SMTP não funcional | Implementar quando UI de reset existir |
 | C09 | 🟢 Baixo | Sem Dockerfile | Trabalho pré-produção |
+| C10 | 🟡 Moderado | Restrição de dependência lash-services ↔ lash-appointments | Decidir abordagem ao resolver C05 |

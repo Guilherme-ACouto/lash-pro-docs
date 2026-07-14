@@ -1,31 +1,101 @@
 # Padrões de Backend
 
-## Fluxo Completo de um Módulo
+O backend é um **projeto Maven multi-módulo**: 9 módulos independentes (`lash-core`,
+`lash-clients`, `lash-services`, `lash-appointments`, `lash-finance`, `lash-stock`,
+`lash-fichas`, `lash-dashboard`, `lash-app`), cada um hexagonal por dentro. Estes padrões
+usam `lash-clients` como referência principal (é o módulo com testes completos) e
+`lash-appointments` para exemplos de porta cross-módulo.
 
-Para cada módulo novo, sempre criar nesta ordem:
+Ver `.specs/codebase/ARCHITECTURE.md` para a árvore de dependências entre módulos e
+`.specs/codebase/STRUCTURE.md` para a árvore de diretórios completa.
 
-1. Domain Model (`domain/model`)
-2. Exceções de domínio (`domain/exception`)
-3. Port In — Use Case interfaces (`domain/port/in`)
-4. Port Out — Repository interface (`domain/port/out`)
-5. Use Case implementations (`application/usecase`)
-6. JPA Entity (`infrastructure/persistence/entity`)
-7. JPA Repository interface (`infrastructure/persistence/repository`)
-8. Mapper (`infrastructure/persistence/mapper`)
-9. Repository Implementation (`infrastructure/persistence/repository`)
-10. DTOs (`adapter/web/dto`)
-11. DTO Mapper (`adapter/web/mapper`)
-12. Controller (`adapter/web/controller`)
-13. Flyway migration (se necessário)
+---
+
+## Criando um módulo novo
+
+1. `{modulo}/pom.xml` — registrar como `<module>` no `pom.xml` raiz e em `<dependencyManagement>`
+2. Domain Model (`domain/model`)
+3. Exceções de domínio (`domain/exception`) — estendendo `DomainException`/`BusinessException` de `lash-core`
+4. Port In — Use Case interfaces (`domain/port/in`)
+5. Port Out — Repository interface, e portas cross-módulo se precisar ler dado de outro módulo (`domain/port/out`)
+6. Use Case implementations (`application/usecase`) — classes simples, **sem anotação Spring**
+7. `{Modulo}Config` (`infrastructure/config`) — registra cada use case como `@Bean`
+8. JPA Entity (`infrastructure/persistence/entity`)
+9. JPA Repository interface — Spring Data (`infrastructure/persistence/repository`)
+10. Mapper Entity ↔ Domain (`infrastructure/persistence/mapper`)
+11. Repository Implementation (`infrastructure/persistence/repository`)
+12. DTOs de Request/Response (`adapter/web/dto`)
+13. Controller (`adapter/web/controller`)
+14. Flyway migration, no range de versão reservado do módulo (`V{modulo}00__...`)
+15. Adicionar o módulo como dependência de `lash-app/pom.xml`
+16. Registrar os handlers de exceção do módulo em `lash-app/adapter/web/GlobalExceptionHandler.java`
+17. Testes: `AbstractIntegrationTest` + `{Modulo}TestApplication` (se o módulo tiver teste de integração) + `*UseCaseImplTest` por use case
+
+### `pom.xml` do módulo
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" ...>
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.lashmanager</groupId>
+        <artifactId>lash-backend</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>lash-clients</artifactId>
+    <name>lash-clients</name>
+    <description>Módulo de gestão de clientes</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.lashmanager</groupId>
+            <artifactId>lash-core</artifactId>
+        </dependency>
+        <!-- outros módulos internos dos quais este depende, se houver -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>
+```
+
+Módulos internos declarados como dependência **sem** `<version>` — a versão vem do
+`<dependencyManagement>` do POM pai, que usa `${project.version}` (todos os módulos
+sobem de versão juntos).
 
 ---
 
 ## Domain Model
 
+Zero dependência de framework — sem `@Entity`, sem Spring, sem Jakarta Validation.
+
 ```java
-// Sem anotações JPA, sem Spring
-@Builder
+package com.lashmanager.clients.domain.model;
+
 @Getter
+@Builder(toBuilder = true)
+@NoArgsConstructor
 @AllArgsConstructor
 public class Client {
     private UUID id;
@@ -40,37 +110,150 @@ public class Client {
 }
 ```
 
+`@Builder(toBuilder = true)` — usar `toBuilder = true` quando o use case de update
+precisa clonar o objeto alterando só alguns campos (`client.toBuilder().name(novo).build()`).
+
 ---
 
-## Use Case — Port In
+## Exceções de domínio
+
+Toda exceção de módulo estende `DomainException` (violação de regra/validação) ou
+`BusinessException` (conflito de estado de negócio) — ambas em `lash-core`:
 
 ```java
-public interface CreateClientUseCase {
-    ClientResult execute(CreateClientCommand command);
+// lash-core/domain/exception/DomainException.java
+public class DomainException extends RuntimeException {
+    public DomainException(String message) { super(message); }
+}
 
-    record CreateClientCommand(
-        String name,
-        String phone,
-        String email,
-        LocalDate birthDate,
-        String notes
-    ) {}
+// lash-core/domain/exception/BusinessException.java
+public class BusinessException extends DomainException {
+    public BusinessException(String message) { super(message); }
+}
+```
 
-    record ClientResult(
-        UUID id,
-        String name,
-        String phone,
-        String email
-    ) {}
+```java
+// lash-clients/domain/exception/ClientNotFoundException.java
+public class ClientNotFoundException extends BusinessException {
+    public ClientNotFoundException(UUID id) {
+        super("Cliente não encontrado: " + id);
+    }
+}
+
+// lash-clients/domain/exception/ClientAlreadyExistsException.java
+public class ClientAlreadyExistsException extends BusinessException {
+    public ClientAlreadyExistsException(String phone) {
+        super("Já existe um cliente com o telefone: " + phone);
+    }
 }
 ```
 
 ---
 
-## Use Case — Implementation
+## Use Case — Port In
 
 ```java
-@Service
+package com.lashmanager.clients.domain.port.in;
+
+public interface CreateClientUseCase {
+
+    record CreateClientCommand(
+            String name,
+            String phone,
+            String email,
+            LocalDate birthDate,
+            String notes
+    ) {}
+
+    record ClientResult(
+            UUID id,
+            String name,
+            String phone,
+            String email,
+            String birthDate,   // datas viram String no Result — já formatadas para a resposta
+            String notes,
+            boolean active,
+            String createdAt
+    ) {}
+
+    ClientResult execute(CreateClientCommand command);
+}
+```
+
+Cada use case define seu próprio `Command`/`Result` como record aninhado. Use cases
+irmãos (ex.: `UpdateClientUseCase`) frequentemente reaproveitam o `ClientResult` de
+`CreateClientUseCase` em vez de duplicar o record.
+
+---
+
+## Use Case — Port Out (Repository)
+
+```java
+package com.lashmanager.clients.domain.port.out;
+
+public interface ClientRepository {
+    Client save(Client client);
+    Optional<Client> findById(UUID id);
+    Page<Client> findAll(String search, Boolean active, Pageable pageable);
+    boolean existsByPhone(String phone);
+    boolean existsByPhoneAndIdNot(String phone, UUID id);
+    void deleteById(UUID id);
+}
+```
+
+## Use Case — Port Out cross-módulo
+
+Quando um módulo precisa de dado de outro módulo, a porta é declarada no módulo
+**consumidor** (não no dono do dado) e implementada como adapter no módulo dono:
+
+```java
+// declarada em lash-clients/domain/port/out/ClientAppointmentPort.java
+// (lash-clients NÃO depende de lash-appointments no pom.xml)
+public interface ClientAppointmentPort {
+    List<AppointmentSummary> findFutureActiveByClientId(UUID clientId, LocalDate from);
+    void deleteFutureAppointmentsByClientId(UUID clientId, LocalDate from);
+    void unlinkClientFromPastAppointments(UUID clientId, LocalDate from);
+}
+```
+
+```java
+// implementada em lash-appointments/infrastructure/adapter/ClientAppointmentPortImpl.java
+// (lash-appointments DEPENDE de lash-clients — a direção da dependência é a inversa
+// da direção da porta: quem implementa importa a interface do outro módulo)
+@Component
+@RequiredArgsConstructor
+public class ClientAppointmentPortImpl implements ClientAppointmentPort {
+
+    private final AppointmentRepository appointmentRepository;
+
+    @Override
+    public List<AppointmentSummary> findFutureActiveByClientId(UUID clientId, LocalDate from) {
+        return appointmentRepository.findFutureActiveByClientId(clientId, from);
+    }
+    // ...
+}
+```
+
+O bean só existe em runtime porque `lash-app` traz os dois módulos no classpath — em um
+módulo isolado (testes de `lash-clients`, por exemplo), essa porta vira `@MockBean`
+(ver `patterns_backend.md` seção de testes mais abaixo e `.specs/codebase/TESTING.md`).
+
+**Antes de criar uma porta cross-módulo nova**, checar a árvore de dependências em
+ARCHITECTURE.md — só é possível declarar `port/out` para consumir um módulo que já
+depende de você (nunca o inverso, senão vira dependência circular no reactor Maven;
+ver C10 em `.specs/codebase/CONCERNS.md` para um caso real disso acontecendo entre
+`lash-services` e `lash-appointments`).
+
+---
+
+## Use Case — Implementation
+
+**Sem anotação Spring.** Classe Java simples com `@RequiredArgsConstructor` — o registro
+como bean é feito manualmente em `{Modulo}Config` (próxima seção).
+
+```java
+package com.lashmanager.clients.application.usecase;
+
 @RequiredArgsConstructor
 public class CreateClientUseCaseImpl implements CreateClientUseCase {
 
@@ -94,21 +277,95 @@ public class CreateClientUseCaseImpl implements CreateClientUseCase {
                 .updatedAt(LocalDateTime.now())
                 .build();
 
-        Client saved = clientRepository.save(client);
-        return new ClientResult(saved.getId(), saved.getName(), saved.getPhone(), saved.getEmail());
+        return ClientUseCaseMapper.toResult(clientRepository.save(client));
+    }
+}
+```
+
+> **Exceção à regra:** em `lash-core`, os 3 use cases (`LoginUseCaseImpl`,
+> `RefreshTokenUseCaseImpl`, `ForgotPasswordUseCaseImpl`) usam `@Service` direto, sem
+> `Config` dedicada — módulo sem dependência cross-módulo a esconder, não precisa do
+> wiring explícito. Em qualquer módulo de domínio novo, seguir o padrão `{Modulo}Config`.
+
+### `*UseCaseMapper` — domain model → Result record
+
+```java
+package com.lashmanager.clients.application.usecase;
+
+public class ClientUseCaseMapper {
+
+    private ClientUseCaseMapper() {}
+
+    public static CreateClientUseCase.ClientResult toResult(Client client) {
+        return new CreateClientUseCase.ClientResult(
+                client.getId(),
+                client.getName(),
+                client.getPhone(),
+                client.getEmail(),
+                client.getBirthDate() != null ? client.getBirthDate().toString() : null,
+                client.getNotes(),
+                client.isActive(),
+                client.getCreatedAt() != null ? client.getCreatedAt().toString() : null
+        );
     }
 }
 ```
 
 ---
 
+## `{Modulo}Config` — wiring dos use cases
+
+Um `@Configuration` por módulo, com um método `@Bean` por use case. É aqui que
+dependências cross-módulo (portas implementadas em outro módulo) entram no construtor:
+
+```java
+package com.lashmanager.clients.infrastructure.config;
+
+@Configuration
+public class ClientsConfig {
+
+    @Bean
+    public CreateClientUseCase createClientUseCase(ClientRepository clientRepository) {
+        return new CreateClientUseCaseImpl(clientRepository);
+    }
+
+    @Bean
+    public DeleteClientUseCase deleteClientUseCase(
+            ClientRepository clientRepository,
+            ClientAppointmentPort clientAppointmentPort   // implementada em lash-appointments
+    ) {
+        return new DeleteClientUseCaseImpl(clientRepository, clientAppointmentPort);
+    }
+
+    @Bean
+    public DeactivateClientUseCase deactivateClientUseCase(
+            ClientRepository clientRepository,
+            ClientAppointmentPort clientAppointmentPort
+    ) {
+        return new DeactivateClientUseCaseImpl(clientRepository, clientAppointmentPort);
+    }
+
+    // ... um @Bean por use case do módulo
+}
+```
+
+**Toda vez que um use case novo é criado, adicionar o `@Bean` correspondente aqui** —
+esquecer esse passo é o erro mais comum ao adicionar um caso de uso novo (o Spring não
+vai reclamar até o controller injetar a interface e não achar bean nenhum).
+
+---
+
 ## JPA Entity
 
 ```java
+package com.lashmanager.clients.infrastructure.persistence.entity;
+
 @Entity
 @Table(name = "clients")
-@Getter @Setter
-@NoArgsConstructor @AllArgsConstructor
+@Getter
+@Setter
+@NoArgsConstructor
+@AllArgsConstructor
 @Builder
 public class ClientEntity {
 
@@ -127,41 +384,31 @@ public class ClientEntity {
     @Column(name = "birth_date")
     private LocalDate birthDate;
 
+    @Column(columnDefinition = "TEXT")
     private String notes;
 
     @Column(nullable = false)
     private boolean active;
 
-    @Column(name = "created_at", updatable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
+    @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
-
-    @PrePersist
-    void prePersist() {
-        LocalDateTime now = LocalDateTime.now();
-        if (createdAt == null) createdAt = now;
-        if (updatedAt == null) updatedAt = now;
-    }
-
-    @PreUpdate
-    void preUpdate() {
-        updatedAt = LocalDateTime.now();
-    }
 }
 ```
 
 ---
 
-## Mapper
+## Mapper (infra) — Entity ↔ Domain
 
 ```java
+package com.lashmanager.clients.infrastructure.persistence.mapper;
+
 @Component
 public class ClientMapper {
 
     public Client toDomain(ClientEntity entity) {
-        if (entity == null) return null;
         return Client.builder()
                 .id(entity.getId())
                 .name(entity.getName())
@@ -176,7 +423,6 @@ public class ClientMapper {
     }
 
     public ClientEntity toEntity(Client domain) {
-        if (domain == null) return null;
         return ClientEntity.builder()
                 .id(domain.getId())
                 .name(domain.getName())
@@ -194,43 +440,145 @@ public class ClientMapper {
 
 ---
 
+## Repository Implementation
+
+```java
+package com.lashmanager.clients.infrastructure.persistence.repository;
+
+@Repository
+@RequiredArgsConstructor
+public class ClientRepositoryImpl implements ClientRepository {
+
+    private final ClientJpaRepository jpaRepository;
+    private final ClientMapper mapper;
+
+    @Override
+    public Client save(Client client) {
+        return mapper.toDomain(jpaRepository.save(mapper.toEntity(client)));
+    }
+
+    @Override
+    public Optional<Client> findById(UUID id) {
+        return jpaRepository.findById(id).map(mapper::toDomain);
+    }
+
+    @Override
+    public Page<Client> findAll(String search, Boolean active, Pageable pageable) {
+        return jpaRepository.findAllFiltered(search, active, pageable).map(mapper::toDomain);
+    }
+
+    @Override
+    public boolean existsByPhone(String phone) {
+        return jpaRepository.existsByPhone(phone);
+    }
+
+    @Override
+    public void deleteById(UUID id) {
+        jpaRepository.deleteById(id);
+    }
+}
+```
+
+### JPQL — padrão de busca
+
+```java
+@Query("""
+    SELECT c FROM ClientEntity c
+    WHERE (:activeOnly = false OR c.active = true)
+    AND (LOWER(c.name) LIKE LOWER(CONCAT('%', :search, '%'))
+         OR c.phone LIKE CONCAT('%', :search, '%'))
+    ORDER BY c.name ASC
+    """)
+Page<ClientEntity> search(@Param("search") String search, @Param("activeOnly") boolean activeOnly, Pageable pageable);
+```
+
+> **Atenção — Hibernate 6:** nunca passar `null` para parâmetro usado dentro de
+> `CONCAT(...)` — lança exceção mesmo com guarda `:search IS NULL`. Normalizar no use
+> case: `search = (search != null) ? search.trim() : ""`. Com `""`, `LIKE '%%'` retorna
+> todas as linhas — comportamento desejado para busca vazia.
+
+---
+
+## DTOs (Request / Response)
+
+```java
+package com.lashmanager.clients.adapter.web.dto;
+
+public record CreateClientRequest(
+        @NotBlank @Size(min = 2, max = 100) String name,
+        @NotBlank @Size(min = 10, max = 20) String phone,
+        String email,
+        LocalDate birthDate,
+        @Size(max = 500) String notes
+) {}
+```
+
+```java
+public record ClientResponse(
+        UUID id,
+        String name,
+        String phone,
+        String email,
+        String birthDate,
+        String notes,
+        boolean active,
+        String createdAt
+) {
+    public static ClientResponse from(CreateClientUseCase.ClientResult result) {
+        return new ClientResponse(
+                result.id(), result.name(), result.phone(), result.email(),
+                result.birthDate(), result.notes(), result.active(), result.createdAt()
+        );
+    }
+}
+```
+
+O `Response` tem um factory estático `from(Result)` — sem `DtoMapper` separado como
+classe própria; a conversão fica no próprio record.
+
+---
+
 ## Controller
 
 ```java
+package com.lashmanager.clients.adapter.web.controller;
+
 @RestController
 @RequestMapping("/api/clients")
 @RequiredArgsConstructor
 public class ClientController {
 
     private final CreateClientUseCase createClientUseCase;
-    private final ListClientsUseCase listClientsUseCase;
-    private final FindClientByIdUseCase findClientByIdUseCase;
     private final UpdateClientUseCase updateClientUseCase;
+    private final GetClientUseCase getClientUseCase;
+    private final ListClientsUseCase listClientsUseCase;
     private final DeleteClientUseCase deleteClientUseCase;
-    private final ClientDtoMapper mapper;
+    private final DeactivateClientUseCase deactivateClientUseCase;
 
     @PostMapping
     public ResponseEntity<ClientResponse> create(@Valid @RequestBody CreateClientRequest request) {
-        var result = createClientUseCase.execute(mapper.toCommand(request));
-        return ResponseEntity.status(HttpStatus.CREATED).body(mapper.toResponse(result));
+        var result = createClientUseCase.execute(new CreateClientUseCase.CreateClientCommand(
+                request.name(), request.phone(), request.email(), request.birthDate(), request.notes()
+        ));
+        return ResponseEntity
+                .created(URI.create("/api/clients/" + result.id()))
+                .body(ClientResponse.from(result));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<ClientResponse> getById(@PathVariable UUID id) {
+        return ResponseEntity.ok(ClientResponse.from(getClientUseCase.execute(id)));
     }
 
     @GetMapping
     public ResponseEntity<Page<ClientResponse>> list(
             @RequestParam(required = false) String search,
-            Pageable pageable) {
-        return ResponseEntity.ok(listClientsUseCase.execute(search, pageable).map(mapper::toResponse));
-    }
-
-    @GetMapping("/{id}")
-    public ResponseEntity<ClientResponse> findById(@PathVariable UUID id) {
-        return ResponseEntity.ok(mapper.toResponse(findClientByIdUseCase.execute(id)));
-    }
-
-    @PutMapping("/{id}")
-    public ResponseEntity<ClientResponse> update(@PathVariable UUID id,
-                                                  @Valid @RequestBody UpdateClientRequest request) {
-        return ResponseEntity.ok(mapper.toResponse(updateClientUseCase.execute(id, mapper.toCommand(request))));
+            @RequestParam(required = false) Boolean active,
+            @PageableDefault(size = 20) Pageable pageable
+    ) {
+        return ResponseEntity.ok(
+                listClientsUseCase.execute(search, active, pageable).map(ClientResponse::from)
+        );
     }
 
     @DeleteMapping("/{id}")
@@ -238,23 +586,108 @@ public class ClientController {
         deleteClientUseCase.execute(id);
         return ResponseEntity.noContent().build();
     }
+
+    @PatchMapping("/{id}/deactivate")
+    public ResponseEntity<Void> deactivate(
+            @PathVariable UUID id,
+            @RequestParam(defaultValue = "false") boolean force
+    ) {
+        deactivateClientUseCase.deactivate(id, force);
+        return ResponseEntity.noContent().build();
+    }
 }
 ```
 
 ---
 
-## Tratamento de Erros
+## Tratamento de Erros — `GlobalExceptionHandler` centralizado em `lash-app`
 
-Todas as exceções de domínio estendem uma base:
+Diferente de um `@RestControllerAdvice` por módulo, existe **um único**
+`GlobalExceptionHandler` no sistema, em `lash-app/adapter/web/`. Ele importa as
+exceções de todos os módulos e agrupa os handlers por comentário de seção:
 
 ```java
-public abstract class DomainException extends RuntimeException {
-    private final int statusCode;
-    public DomainException(String message, int statusCode) {
-        super(message);
-        this.statusCode = statusCode;
+package com.lashmanager.app.adapter.web;
+
+@RestControllerAdvice
+@Slf4j
+public class GlobalExceptionHandler {
+
+    // ── Clientes ──────────────────────────────────────────────────────────────
+
+    @ExceptionHandler(ClientNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleClientNotFound(ClientNotFoundException ex) {
+        return err(HttpStatus.NOT_FOUND, ex.getMessage());
+    }
+
+    @ExceptionHandler(ClientAlreadyExistsException.class)
+    public ResponseEntity<ErrorResponse> handleClientAlreadyExists(ClientAlreadyExistsException ex) {
+        return err(HttpStatus.CONFLICT, ex.getMessage());
+    }
+
+    // ── Genéricos ─────────────────────────────────────────────────────────────
+
+    @ExceptionHandler(BusinessException.class)
+    public ResponseEntity<ErrorResponse> handleBusiness(BusinessException ex) {
+        return err(HttpStatus.UNPROCESSABLE_ENTITY, ex.getMessage());
+    }
+
+    @ExceptionHandler(DomainException.class)
+    public ResponseEntity<ErrorResponse> handleDomain(DomainException ex) {
+        return err(HttpStatus.BAD_REQUEST, ex.getMessage());
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ErrorResponse> handleGeneral(Exception ex) {
+        log.error("Erro interno não tratado: ", ex);
+        return err(HttpStatus.INTERNAL_SERVER_ERROR, "Erro interno do servidor");
+    }
+
+    private ResponseEntity<ErrorResponse> err(HttpStatus status, String message) {
+        return ResponseEntity.status(status)
+                .body(new ErrorResponse(status.value(), message, LocalDateTime.now().toString()));
     }
 }
 ```
 
-O `GlobalExceptionHandler` captura e formata a resposta de erro padronizada.
+**Ao adicionar uma exceção de domínio nova**, sempre registrar o handler específico
+aqui (não deixar cair no genérico `BusinessException`/`DomainException`, a menos que o
+status HTTP genérico já seja o correto) — sob o comentário de seção do módulo dono.
+
+---
+
+## Testes
+
+Ver `.specs/codebase/TESTING.md` para o padrão completo (por módulo, `@DisplayName`
+em português, `{Modulo}TestApplication`, `@MockBean` para portas cross-módulo). Resumo:
+
+```java
+// Unit — mocka o Repository
+@ExtendWith(MockitoExtension.class)
+@DisplayName("Criar cliente")
+class CreateClientUseCaseImplTest {
+    @Mock private ClientRepository clientRepository;
+    private CreateClientUseCaseImpl useCase;
+
+    @BeforeEach
+    void setUp() { useCase = new CreateClientUseCaseImpl(clientRepository); }
+
+    @Test
+    @DisplayName("deve criar cliente quando o telefone ainda não está cadastrado")
+    void execute_withNewPhone_returnsClientResult() { ... }
+}
+```
+
+```java
+// Integração — banco real, dentro do módulo
+@DisplayName("Clientes — integração")
+class ClientITest extends AbstractIntegrationTest {
+
+    @MockBean
+    ClientAppointmentPort clientAppointmentPort;   // porta implementada em outro módulo
+
+    @Test
+    @DisplayName("deve criar, buscar, atualizar e excluir um cliente com sucesso")
+    void createFindUpdateDelete_fullCrudFlow() { ... }
+}
+```

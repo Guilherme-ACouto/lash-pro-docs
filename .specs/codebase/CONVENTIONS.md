@@ -1,10 +1,28 @@
 # Convenções — Lash Manager
 
-**Atualizado:** 2026-05-22
+**Atualizado:** 2026-07-14
 
 ---
 
 ## Backend — Java
+
+### Multi-módulo: onde colocar código novo
+
+- Cada domínio de negócio é um módulo Maven próprio (`lash-clients`, `lash-finance`, ...) — nunca adicionar pacote de um domínio novo dentro de um módulo existente
+- Exceção base de todo módulo estende `DomainException` (violação de regra/validação) ou `BusinessException` (conflito de estado de negócio), ambas definidas em `lash-core.domain.exception` — nunca redefinir essas classes-base em outro módulo:
+  ```java
+  package com.lashmanager.fichas.domain.exception;
+  import com.lashmanager.core.domain.exception.BusinessException;
+
+  public class ClientAlreadyHasFichaException extends BusinessException {
+      public ClientAlreadyHasFichaException(UUID clientId) {
+          super("Cliente já possui ficha de anamnese: " + clientId);
+      }
+  }
+  ```
+- Se o código novo precisa de dado de outro módulo, criar um `port/out` no módulo consumidor e implementá-lo como adapter no módulo dono do dado — nunca importar entidade/repositório JPA de outro módulo (ver ARCHITECTURE.md)
+- Novo endpoint HTTP → handler de exceção correspondente vai em `lash-app/adapter/web/GlobalExceptionHandler.java` (único `@RestControllerAdvice` do sistema, agrupado por comentário de seção `// ── Nome do Módulo ──`)
+- Nova tabela/coluna → nova migration Flyway **dentro do range do módulo dono** (ex.: próxima migration de `lash-clients` é `V201__...`, nunca reaproveitar range de outro módulo) — ver STRUCTURE.md
 
 ### Nomenclatura de classes
 
@@ -22,7 +40,9 @@
 | Controller | `NomeController` | `ClientController` |
 | Request DTO | `VerbNomeRequest` | `CreateClientRequest`, `UpdateClientRequest` |
 | Response DTO | `NomeResponse` | `ClientResponse`, `ServiceResponse` |
-| Exception | `NomeException` | `ClientNotFoundException`, `ServiceNotFoundException` |
+| Exception | `NomeException` | `ClientNotFoundException`, `ServiceNotFoundException` — sempre estende `DomainException`/`BusinessException` de lash-core |
+| Teste unitário | `NomeUseCaseImplTest` | `CreateClientUseCaseImplTest` |
+| Teste de integração | `{Entidade}ITest` (sufixo "ITest", não "IT"/"IntegrationTest") | `ClientITest` |
 
 ### Tipos obrigatórios
 
@@ -51,15 +71,31 @@ public class Client {
 }
 ```
 
-### Anotação conflitante `Service`
+### Wiring de use case: `{Modulo}Config`, nunca `@Service`
 
-Quando a classe de domínio `domain.model.Service` está no escopo, a anotação Spring deve ser qualificada:
+Nos 8 módulos de domínio (todos exceto `lash-core`), `*UseCaseImpl` é uma classe Java simples — só `@RequiredArgsConstructor`, **sem anotação Spring**. O registro como bean acontece manualmente em `infrastructure/config/{Modulo}Config.java` (`@Configuration` + um método `@Bean` por use case):
 
 ```java
-@org.springframework.stereotype.Service  // qualificado para evitar ambiguidade
+// domain: classe simples, sem anotação Spring
 @RequiredArgsConstructor
-public class CreateServiceUseCaseImpl implements CreateServiceUseCase { ... }
+public class CreateClientUseCaseImpl implements CreateClientUseCase {
+    private final ClientRepository clientRepository;
+    // ...
+}
+
+// infrastructure/config/ClientsConfig.java: wiring explícito
+@Configuration
+public class ClientsConfig {
+    @Bean
+    public CreateClientUseCase createClientUseCase(ClientRepository clientRepository) {
+        return new CreateClientUseCaseImpl(clientRepository);
+    }
+}
 ```
+
+`lash-core` é a exceção: seus use cases (`LoginUseCaseImpl`, ...) usam `@Service` direto, sem `Config` dedicada — módulo mais simples, sem dependências cross-módulo a esconder.
+
+Ao criar um use case novo em qualquer módulo de domínio: **não** anotar a classe `*UseCaseImpl` — sempre adicionar o `@Bean` correspondente em `{Modulo}Config`.
 
 ### Result records (use cases)
 
@@ -96,13 +132,33 @@ Um único `@RestControllerAdvice` centraliza todos os handlers. Formato padrão 
 new ErrorResponse(status, message, LocalDateTime.now().toString())
 ```
 
-### Ordem de criação de um módulo
+### Ordem de criação de um módulo (novo domínio)
 
-1. Domain model → exceções → port/in → port/out
-2. Use case implementations + mapper
-3. JPA entity → JPA repository → mapper → repository impl
-4. DTOs → controller
-5. Flyway migration (se schema mudou)
+1. `pom.xml` do módulo + registrar em `<modules>` do POM pai e em `<dependencyManagement>`
+2. Domain model → exceções (estendendo `DomainException`/`BusinessException` de lash-core) → port/in → port/out
+3. Use case implementations + mapper
+4. JPA entity → JPA repository → mapper → repository impl
+5. DTOs → controller
+6. Flyway migration com range de versão próprio (próximo range livre, incremento de 100 — ver STRUCTURE.md)
+7. Adicionar dependência do novo módulo em `lash-app/pom.xml`
+8. Registrar handlers de exceção do novo módulo em `lash-app/adapter/web/GlobalExceptionHandler.java`
+9. `AbstractIntegrationTest` + `{Modulo}TestApplication` de teste, se o módulo tiver testes de integração (ver TESTING.md)
+
+### Testes — `@DisplayName` obrigatório em português
+
+Toda classe de teste e todo método `@Test` leva `@DisplayName` em português. O nome do método continua em inglês (padrão de código); o `@DisplayName` é a descrição legível:
+
+```java
+@DisplayName("Criar cliente")
+class CreateClientUseCaseImplTest {
+
+    @Test
+    @DisplayName("deve criar cliente quando o telefone ainda não está cadastrado")
+    void execute_withNewPhone_returnsClientResult() { ... }
+}
+```
+
+Ver TESTING.md para o padrão completo de testes unitários vs. integração por módulo.
 
 ---
 

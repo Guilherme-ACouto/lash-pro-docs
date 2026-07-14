@@ -2,18 +2,29 @@
 
 Documentação do sistema Lash Manager.
 
+O backend (`lash-backend/`) é um projeto **multi-módulo Maven**: 9 módulos independentes
+(`lash-core`, `lash-clients`, `lash-services`, `lash-appointments`, `lash-finance`,
+`lash-stock`, `lash-fichas`, `lash-dashboard`, `lash-app`), cada um com sua própria
+arquitetura hexagonal interna, testes e migration Flyway. Detalhes em
+`.specs/codebase/ARCHITECTURE.md` e `.specs/codebase/STRUCTURE.md`.
+
 ## Estrutura
 
 ```
 .specs/
 ├── codebase/
-│   ├── ARCHITECTURE.md     → arquitetura hexagonal, decisões técnicas
+│   ├── STACK.md            → tecnologias, versões, portas, variáveis, build multi-módulo
+│   ├── ARCHITECTURE.md     → arquitetura hexagonal por módulo, dependências entre módulos
+│   ├── STRUCTURE.md        → árvore de diretórios dos 9 módulos + migrations
 │   ├── CONVENTIONS.md      → padrões de nomenclatura e código
-│   └── STACK.md            → tecnologias, versões, portas, variáveis
-└── project/
-    ├── PROJECT.md          → visão do produto, módulos, regras de negócio
-    ├── ROADMAP.md          → fases de entrega
-    └── STATE.md            → estado atual, credenciais, como subir o ambiente
+│   ├── TESTING.md          → testes por módulo, @DisplayName, gate checks
+│   ├── INTEGRATIONS.md     → JWT, banco, Flyway por módulo, SMTP, CORS
+│   └── CONCERNS.md         → tech debt e riscos conhecidos, por prioridade
+├── project/
+│   ├── PROJECT.md          → visão do produto, módulos, regras de negócio
+│   ├── ROADMAP.md          → fases de entrega
+│   └── STATE.md            → estado atual, credenciais, como subir o ambiente
+└── features/               → spec/design/tasks por feature (ex.: clientes/, servicos/)
 
 patterns/
 ├── patterns_backend.md     → exemplos de use case, entity, mapper, controller

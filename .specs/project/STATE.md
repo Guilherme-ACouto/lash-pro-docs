@@ -55,7 +55,7 @@
 
 - Fase 2 — Dashboard implementado, aguardando testes completos pela usuária
 - **Módulo Financeiro** — implementação completa + correções pós-teste (2026-05-26), aguardando testes finais pela usuária
-- **Testes — Módulo de Clientes** — spec + tasks + implementação completa (2026-05-29); aguardando execução pela usuária (`mvn test`)
+- **Testes — Módulo de Clientes** — spec + tasks + implementação completa (2026-05-29); ✅ todos os 28 testes passando (2026-07-13)
 
 ### ✅ Fase 2 — Concluído
 
@@ -137,6 +137,7 @@
 | CLI-13 | ✅ Implementado — modal com lista de agendamentos futuros ao desativar; exclusão bloqueia se futuros ativos, apaga futuros cancelados, desvincula passados | Concluído |
 | SVC-13 | ✅ Implementado — modal com lista de agendamentos futuros ao desativar; exclusão bloqueia se futuros ativos | Concluído |
 | RENAME-01 | Renomear `domain.model.Service` para `ServiceOffering` ou `LashService` | Refactor pós-Fase 1 |
+| CQRS-01 | Implementar padrão CQRS nos endpoints — separar operações de leitura (Query) das de escrita (Command) | Após refatoração multi-módulo |
 
 ---
 

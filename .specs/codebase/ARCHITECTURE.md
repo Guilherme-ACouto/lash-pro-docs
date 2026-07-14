@@ -1,52 +1,78 @@
 # Arquitetura — Lash Manager
 
-**Atualizado:** 2026-05-22
+**Atualizado:** 2026-07-14
 
 ## Visão Geral
 
-Monorepo com dois projetos independentes: `lash-backend/` (Java) e `lash-frontend/` (Angular). O backend segue **Arquitetura Hexagonal (Ports & Adapters)**; o frontend segue **Feature-first com NgRx**.
+Monorepo com dois projetos independentes: `lash-backend/` (Java, **multi-módulo Maven**) e `lash-frontend/` (Angular). O backend segue **Arquitetura Hexagonal (Ports & Adapters)** dentro de cada módulo; o frontend segue **Feature-first com NgRx**.
 
 ---
 
-## Backend — Arquitetura Hexagonal
+## Backend — Multi-módulo Maven + Arquitetura Hexagonal
 
-### Camadas e fluxo de uma requisição
+O backend foi dividido em **9 módulos Maven independentes**, um por domínio de negócio (+ um módulo executável). Cada módulo é internamente hexagonal — a divisão em módulos é uma fronteira física adicional por cima da fronteira lógica de camadas.
+
+### Módulos e dependências
+
+```
+lash-core            ← base: User/Auth, exceções raiz, infra compartilhada (security, email)
+   ▲
+   ├── lash-clients        ← depende de: lash-core
+   ├── lash-services       ← depende de: lash-core
+   │      ▲
+   │      └── lash-appointments  ← depende de: lash-core, lash-clients, lash-services
+   │             ▲
+   │             └── lash-finance     ← depende de: lash-core, lash-appointments
+   │                    ▲
+   │                    └── lash-stock     ← depende de: lash-core, lash-finance
+   ├── lash-fichas         ← depende de: lash-core, lash-clients
+   └── lash-dashboard      ← depende de: lash-core, lash-clients, lash-appointments,
+                               lash-finance, lash-stock (agrega leituras de todos)
+
+lash-app              ← módulo executável (@SpringBootApplication), depende de TODOS os módulos acima
+```
+
+**Regra de dependência:** um módulo só pode depender de módulos "abaixo" dele nessa árvore — nunca há dependência circular entre módulos de domínio. `lash-core` não depende de nenhum outro módulo interno.
+
+**Comunicação entre módulos:** quando um módulo precisa de dado de outro (ex.: `lash-clients` precisa saber se um cliente tem agendamentos futuros antes de desativar), a comunicação é feita via **port/out implementado no módulo consumidor e satisfeito por um adapter no módulo que tem o dado** — nunca acessando repositório/entidade de outro módulo diretamente. Exemplo real: `ClientAppointmentPort` (definida em `lash-clients/domain/port/out`) é implementada em `lash-appointments/infrastructure/adapter`, e injetada em `lash-clients` via Spring (o bean vem do classpath de `lash-appointments`, presente porque `lash-app` traz ambos).
+
+### Camadas e fluxo de uma requisição (dentro de cada módulo)
 
 ```
 HTTP Request
     │
     ▼
-[Controller]          adapter/web/controller/
+[Controller]          {modulo}/adapter/web/controller/
     │  usa
     ▼
-[port/in interface]   domain/port/in/
+[port/in interface]   {modulo}/domain/port/in/
     │  implementado por
     ▼
-[UseCase Impl]        application/usecase/
+[UseCase Impl]        {modulo}/application/usecase/
     │  usa
     ▼
-[port/out interface]  domain/port/out/
+[port/out interface]  {modulo}/domain/port/out/
     │  implementado por
     ▼
-[RepositoryImpl]      infrastructure/persistence/repository/
+[RepositoryImpl]      {modulo}/infrastructure/persistence/repository/
     │  usa
     ▼
-[JpaRepository]       infrastructure/persistence/repository/ (Spring Data)
+[JpaRepository]       {modulo}/infrastructure/persistence/repository/ (Spring Data)
     │
     ▼
 PostgreSQL
 ```
 
-### Estrutura de pacotes
+### Estrutura de pacotes (repetida em cada módulo, prefixo `com.lashmanager.{modulo}`)
 
 ```
-com.lashmanager.app
+com.lashmanager.{modulo}
 ├── domain/                      ← zero dependência de framework
-│   ├── model/                   ← entidades puras (Client, Service, User)
-│   ├── exception/               ← DomainException e subclasses
+│   ├── model/                   ← entidades puras (Client, Appointment, FinancialEntry, ...)
+│   ├── exception/                ← *Exception estendendo DomainException/BusinessException (de lash-core)
 │   └── port/
 │       ├── in/                  ← interfaces de use case (CreateClientUseCase, ...)
-│       └── out/                 ← interfaces de repositório (ClientRepository, ...)
+│       └── out/                 ← interfaces de repositório/integração (ClientRepository, ClientAppointmentPort, ...)
 │
 ├── application/usecase/         ← implementações dos use cases
 │   ├── CreateClientUseCaseImpl
@@ -55,32 +81,57 @@ com.lashmanager.app
 │
 ├── infrastructure/
 │   ├── persistence/
-│   │   ├── entity/              ← @Entity JPA (ClientEntity, ServiceEntity, ...)
-│   │   ├── mapper/              ← converte Entity ↔ Domain Model
-│   │   └── repository/         ← JpaRepository + RepositoryImpl
-│   └── security/               ← JwtService, SecurityConfig, JwtAuthFilter
+│   │   ├── entity/              ← @Entity JPA (ClientEntity, AppointmentEntity, ...)
+│   │   ├── mapper/               ← converte Entity ↔ Domain Model
+│   │   └── repository/          ← JpaRepository + RepositoryImpl
+│   ├── adapter/                  ← implementações de port/out que cruzam módulo (ex.: ClientAppointmentPortImpl)
+│   └── config/                   ← @Configuration específica do módulo, quando existe
 │
 └── adapter/web/
-    ├── controller/              ← @RestController + GlobalExceptionHandler
-    └── dto/                     ← records de Request e Response
+    ├── controller/               ← @RestController
+    └── dto/                      ← records de Request e Response
 ```
+
+`lash-core` adicionalmente concentra: `DomainException`/`BusinessException` (exceções raiz que todos os módulos estendem), `security/` (JwtService, SecurityConfig, JwtAuthFilter, UserDetailsServiceImpl) e `infrastructure/email/`.
+
+`lash-app` concentra apenas: classe `LashManagerApplication` (`@SpringBootApplication` com `scanBasePackages`, `@EnableJpaRepositories` e `@EntityScan` em `com.lashmanager`, para varrer todos os módulos) e `GlobalExceptionHandler` (único `@RestControllerAdvice` do sistema — centraliza handlers de exceções de **todos** os módulos).
 
 ### Regras invioláveis
 
-- `domain/` não tem nenhuma dependência de framework (sem `@Entity`, sem `@Service`, sem Spring)
+- `domain/` não tem nenhuma dependência de framework (sem `@Entity`, sem `@Service`, sem Spring) — vale em todos os módulos
 - Use cases dependem apenas de interfaces (`port/out`), nunca de implementações
 - Controllers dependem apenas de `port/in`, nunca de repositórios diretamente
 - Injeção sempre via construtor — `@RequiredArgsConstructor`; nunca `@Autowired` em campo
+- Módulos nunca acessam entidade JPA ou repositório de outro módulo — a fronteira é sempre um `port/out` + adapter
 
-### Nota: conflito de nome `Service`
+### Wiring dos use cases: `{Modulo}Config` em vez de `@Service`
 
-`domain.model.Service` compartilha nome com `@org.springframework.stereotype.Service`. Nas implementações de use case, a anotação Spring é usada com nome qualificado completo:
+Diferente do que a Fase 1 (mono-módulo) fazia, os `*UseCaseImpl` dos 8 módulos de domínio (todos exceto `lash-core`) **não levam anotação Spring nenhuma** — nem `@Service`, nem `@Component`. Eles são classes Java simples com `@RequiredArgsConstructor`, e cada módulo declara uma única classe `infrastructure/config/{Modulo}Config.java` (`@Configuration`) que registra cada use case como `@Bean` manualmente:
 
 ```java
-@org.springframework.stereotype.Service
-@RequiredArgsConstructor
-public class CreateServiceUseCaseImpl implements CreateServiceUseCase { ... }
+// lash-clients/infrastructure/config/ClientsConfig.java
+@Configuration
+public class ClientsConfig {
+
+    @Bean
+    public CreateClientUseCase createClientUseCase(ClientRepository clientRepository) {
+        return new CreateClientUseCaseImpl(clientRepository);
+    }
+
+    @Bean
+    public DeleteClientUseCase deleteClientUseCase(
+            ClientRepository clientRepository,
+            ClientAppointmentPort clientAppointmentPort   // porta cross-módulo
+    ) {
+        return new DeleteClientUseCaseImpl(clientRepository, clientAppointmentPort);
+    }
+    // ... um @Bean por use case
+}
 ```
+
+Essa mudança **resolveu de forma definitiva** o antigo conflito de nome `domain.model.Service` vs. `@org.springframework.stereotype.Service` (documentado como C03 em CONCERNS.md na Fase 1) — como não há mais anotação `@Service` em lugar nenhum dos módulos de domínio, o conflito deixou de existir. `lash-core` é a única exceção: seus 3 use cases (`LoginUseCaseImpl`, `RefreshTokenUseCaseImpl`, `ForgotPasswordUseCaseImpl`) ainda usam `@Service` diretamente, sem `{Modulo}Config` — não há necessidade de mudar, já que `core` não tem um domain model chamado `Service`.
+
+**Por que essa mudança:** wiring explícito via `@Bean` deixa a instanciação de dependências cross-módulo (como `ClientAppointmentPort`, implementada em `lash-appointments`) visível e centralizada em um único arquivo por módulo, em vez de depender de component scan implícito descobrir a implementação certa em outro JAR do classpath.
 
 ---
 
@@ -88,12 +139,17 @@ public class CreateServiceUseCaseImpl implements CreateServiceUseCase { ... }
 
 | Módulo | Domain Model | Use Cases | Endpoint base |
 |---|---|---|---|
-| Auth | `User` | Login, Refresh, ForgotPassword | `/api/auth/**` |
-| Clients | `Client` | Create, Update, Get, List, Deactivate | `/api/clients` |
-| Services | `Service` | Create, Update, Get, List, Deactivate | `/api/services` |
-| Appointments | *(schema criado)* | *(não implementado)* | — |
-| Financial | *(schema criado)* | *(não implementado)* | — |
-| Inventory | *(schema criado)* | *(não implementado)* | — |
+| lash-core | `User` | Login, Refresh, ForgotPassword (3 use cases) | `/api/auth/**` |
+| lash-clients | `Client` | Create, Update, Get, List, Deactivate/Reactivate, Delete (7 use cases) | `/api/clients` |
+| lash-services | `Service` | Create, Update, Get, List, Deactivate (7 use cases) | `/api/services` |
+| lash-appointments | `Appointment`, `AppointmentStatus` | Create, Update, Get, List, Cancel, ... (6 use cases) | `/api/appointments` |
+| lash-finance | `FinancialEntry`, `MonthlyFinancialStat`, tipos/status | Create, Update, Get, List, ... (7 use cases) | `/api/financial` |
+| lash-stock | `InventoryItem`, `InventoryMovement`, tipos de movimento | Create, Update, Get, List, registrar movimentação, ... (10 use cases) | `/api/inventory` |
+| lash-fichas | `Ficha`, `LashMapping` | Create, Update, Get, List, mapeamento de lashes, ... (9 use cases) | `/api/fichas` |
+| lash-dashboard | *(agrega leituras — sem model próprio)* | 2 use cases de agregação | `/api/dashboard` |
+| lash-app | — (só bootstrap + GlobalExceptionHandler) | — | — |
+
+Todos os 9 módulos estão implementados no backend (domain → use case → persistência → controller). A cobertura de testes automatizados, porém, hoje só existe em `lash-core` e `lash-clients` — ver TESTING.md.
 
 ---
 
@@ -151,25 +207,28 @@ features/nome/
 | Layout | (shell) | — | SidebarComponent, BottomNavComponent |
 | Clients | `/clients` | `clients` | List, Form, Detail |
 | Services | `/services` | `services` | List, Form, Detail |
-| Appointments | `/appointments` | *(pendente)* | Placeholder |
-| Financial | `/financial` | *(pendente)* | Placeholder |
-| Inventory | `/inventory` | *(pendente)* | Placeholder |
-| Dashboard | `/dashboard` | *(pendente)* | Placeholder |
+| Appointments | `/appointments` | *(pendente)* | Placeholder — backend já implementado |
+| Financial | `/financial` | *(pendente)* | Placeholder — backend já implementado |
+| Inventory | `/inventory` | *(pendente)* | Placeholder — backend já implementado |
+| Dashboard | `/dashboard` | *(pendente)* | Placeholder — backend já implementado |
+
+> O frontend está atrasado em relação ao backend: os módulos de Agendamentos, Financeiro, Estoque e Dashboard já têm API completa (ver tabela acima), mas ainda não têm UI/NgRx. Próxima fase do roadmap.
 
 ---
 
 ## Banco de Dados — Schema
 
-8 tabelas definidas em `V1__create_schema.sql`:
+Mesmo schema físico de 8 tabelas, agora criado por **migrations separadas por módulo** em vez de um único `V1__create_schema.sql` (ver ARCHITECTURE das migrations em INTEGRATIONS.md e STACK.md):
 
 ```
-users ──────────────────────────────────────────────────────────
-clients ────────────────────────────────────────────────────────
-services ───────────────────────────────────────────────────────
-appointments ──── FK → clients.id ──── FK → services.id ────────
-financial_entries ──────────────────────────────────────────────
-inventory_items ─────────────────────────────────────────────────
-inventory_movements ─── FK → inventory_items.id ─────────────────
+users ──────────────────────────────────────────────────────────  V100 (lash-core)
+clients ────────────────────────────────────────────────────────  V200 (lash-clients)
+services ───────────────────────────────────────────────────────  V300 (lash-services)
+appointments ──── FK → clients.id ──── FK → services.id ────────  V400 (lash-appointments)
+financial_entries ──── FK → appointments.id ─────────────────────  V500 (lash-finance)
+inventory_items / inventory_movements ─── FK entre si ───────────  V600 (lash-stock)
+fichas / lash_mappings ─── FK → clients.id ──────────────────────  V700 (lash-fichas)
+                                                                    V800 (lash-app: seed data)
 ```
 
 Status do appointment: `CHECK (status IN ('SCHEDULED','CONFIRMED','COMPLETED','CANCELLED'))`
@@ -182,7 +241,7 @@ Status do appointment: `CHECK (status IN ('SCHEDULED','CONFIRMED','COMPLETED','C
 POST /api/auth/login
     │
     ▼
-LoginUseCaseImpl
+LoginUseCaseImpl (lash-core)
     ├── findByEmail → UserRepository
     ├── passwordEncoder.matches(password, hash)
     └── TokenPort.generateAccessToken + generateRefreshToken
@@ -194,10 +253,10 @@ Requisições autenticadas:
     Authorization: Bearer <accessToken>
     │
     ▼
-JwtAuthFilter
+JwtAuthFilter (lash-core)
     ├── JwtService.extractEmail(token)
     ├── JwtService.isTokenValid(token, userDetails)
     └── SecurityContextHolder.setAuthentication(...)
 ```
 
-Token types discriminados via claim `"type"`: `"ACCESS"` vs `"REFRESH"`.
+Token types discriminados via claim `"type"`: `"ACCESS"` vs `"REFRESH"`. `JwtAuthFilter` e `SecurityConfig` vivem em `lash-core` e são reaproveitados por todos os módulos porque `lash-app` os traz no classpath e o `@ComponentScan` (via `scanBasePackages = "com.lashmanager"`) os registra globalmente.
