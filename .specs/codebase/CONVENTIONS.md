@@ -44,6 +44,25 @@
 | Teste unitário | `NomeUseCaseImplTest` | `CreateClientUseCaseImplTest` |
 | Teste de integração | `{Entidade}ITest` (sufixo "ITest", não "IT"/"IntegrationTest") | `ClientITest` |
 
+### Command + ApplicationService + Query (padrão Pontta, piloto em `lash-core`)
+
+Introduzido em `refactor-backend` (multi-tenancy + alinhamento com o padrão da Pontta). Ainda piloto em `lash-core`; propagação pros outros módulos é a Fase E/F desse projeto.
+
+| Tipo | Padrão | Exemplo | Onde mora |
+|---|---|---|---|
+| Command | `VerbNomeCommand`, estende `AbstractCommand` | `RegisterCommand` | `application/command/` |
+| ApplicationService | `VerbNomeApplicationService`, método `when(Command)` | `RegisterApplicationService` | `application/service/` |
+| Query Repository (port/out) | `NomeQueryRepository` | `ClientQueryRepository` | `domain/port/out/` |
+| Query Repository Impl | `NomeQueryRepositoryImpl` | `ClientQueryRepositoryImpl` | `infrastructure/persistence/repository/` |
+
+**Regras:**
+- `Command` carrega as anotações de Bean Validation (`@NotBlank`, `@Email`, etc.) — o `CommandInterceptor` (`@Aspect` em `lash-core`) valida automaticamente qualquer `when(...)`, então o Controller não precisa repetir `@Valid` no `Command` (só no `Request` DTO de entrada, se houver um).
+- `ApplicationService.when()` só orquestra: chama o `UseCase` de domínio, que continua com a regra de negócio pura — nenhuma mudança de responsabilidade, só de quem invoca.
+- `QueryRepository` separa a leitura (listagem/busca simples) da escrita — mas **`findById` continua existindo também no `Repository` de escrita** quando um use case de escrita precisa carregar o agregado completo antes de mutar (ex.: `UpdateXUseCaseImpl`). Não é duplicação acidental — é o ponto de escrita e o ponto de leitura tendo, cada um, o contrato que precisam.
+- **Diferente da Pontta**: aqui não existe sufixo `*Dao`/`*RowMapper` — repositórios de leitura que fazem agregação/JOIN via `EntityManager`/JPQL (ex.: `FinancialSummaryRepositoryImpl`) continuam com o sufixo `*RepositoryImpl` de sempre, só que implementando uma porta cujo nome termina em `QueryRepository` em vez de `Repository`. Manter o sufixo `RepositoryImpl` em vez de introduzir `Dao` evita duas convenções concorrentes para a mesma coisa (adapter de persistência) no mesmo codebase.
+- Módulos 100% leitura (ex.: `lash-dashboard`) não precisam de uma `QueryRepository` própria se já compõem dados direto dos `JpaRepository`s de outros módulos dentro do próprio `UseCaseImpl` — não existe um repositório de escrita dashboard-specific do qual seria preciso "separar" a leitura.
+- `CommandAuditLog` (schema do tenant, ou `public` para os commands que rodam antes de qualquer tenant existir) registra toda execução de `when(...)`, sucesso ou falha — ver `lash-core/infrastructure/command/CommandInterceptor.java`.
+
 ### Tipos obrigatórios
 
 | Caso de uso | Tipo Java |
